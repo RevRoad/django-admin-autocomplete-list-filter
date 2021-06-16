@@ -4,21 +4,14 @@ import sys
 import warnings
 
 from django import forms
+from django.conf import settings
 from django.contrib import admin
-from django.contrib.admin.widgets import AutocompleteSelect
+from django.contrib.admin.widgets import AutocompleteSelect, SELECT2_TRANSLATIONS
 from django.db.models.fields.related_descriptors import (
     ManyToManyDescriptor,
     ReverseManyToOneDescriptor,
 )
-from django.utils.translation import ugettext_lazy as _
-
-CURRENT_PYTHON = sys.version_info[:2]
-REQUIRED_PYTHON_FOR_FSTRING = (3, 6)
-USE_FSTRING = CURRENT_PYTHON >= REQUIRED_PYTHON_FOR_FSTRING
-
-
-class WillRemoveInVersion10(FutureWarning):
-    pass
+from django.utils.translation import get_language, ugettext_lazy as _
 
 
 class AjaxAutocompleteSelectWidget(AutocompleteSelect):
@@ -28,14 +21,11 @@ class AjaxAutocompleteSelectWidget(AutocompleteSelect):
         self.model = kwargs.pop('model')
         self.field_name = kwargs.pop('field_name')
         kwargs.update(admin_site=self.model_admin.admin_site)
-        kwargs.update(rel=getattr(self.model, self.field_name).field.remote_field)
+        kwargs.update(field=getattr(self.model, self.field_name).field)
         super().__init__(*args, **kwargs)
 
     def render(self, name, value, attrs=None, renderer=None):
         rendered = super().render(name, value, attrs, renderer)
-
-        if not USE_FSTRING:
-            warnings.warn('Will remove str.format, will use f-strings only', WillRemoveInVersion10)
         html_string = (
             '<div class="ajax-autocomplete-select-widget-wrapper" data-qs-target-value="{qs_target_value}">'
             '{rendered}'
@@ -66,7 +56,7 @@ class AjaxAutocompleteListFilter(admin.RelatedFieldListFilter):
         initial_values = dict(querystring_value=request.GET.urlencode())
         if autocomplete_field_initial_value:
             initial_values.update(autocomplete_field=autocomplete_field_initial_value)
-        self.autocomplete_form = AutocompleteForm(initial=initial_values)
+        self.autocomplete_form = AutocompleteForm(initial=initial_values, prefix=qs_target_value)
 
     def get_queryset_for_field(self, model, name):
         """
@@ -96,19 +86,23 @@ class AjaxAutocompleteListFilterModelAdmin(admin.ModelAdmin):
     def get_autocomplete_list_filter(self):
         return list(getattr(self, 'autocomplete_list_filter', []))
 
-    class Media:
-        js = [
-            'admin/js/vendor/jquery/jquery.js',
-            'admin/js/vendor/select2/select2.full.js',
-            'admin/js/vendor/select2/i18n/tr.js',
-            'admin/js/jquery.init.js',
-            'admin/js/autocomplete.js',
-            'djaa_list_filter/admin/js/autocomplete_list_filter.js',
-        ]
-        css = {
-            'screen': [
-                'admin/css/vendor/select2/select2.css',
-                'admin/css/autocomplete.css',
-                'djaa_list_filter/admin/css/autocomplete_list_filter.css',
-            ]
-        }
+    @property
+    def media(self):
+        extra = '' if settings.DEBUG else '.min'
+        i18n_name = SELECT2_TRANSLATIONS.get(get_language())
+        i18n_file = ('admin/js/vendor/select2/i18n/%s.js' % i18n_name,) if i18n_name else ()
+        return super().media + forms.Media(
+            js=(
+                'admin/js/vendor/select2/select2.full%s.js' % extra,
+            ) + i18n_file + (
+                'admin/js/autocomplete.js',
+                'djaa_list_filter/admin/js/autocomplete_list_filter.js',
+            ),
+            css={
+                'screen': (
+                    'admin/css/vendor/select2/select2%s.css' % extra,
+                    'admin/css/autocomplete.css',
+                    'djaa_list_filter/admin/css/autocomplete_list_filter.css',
+                ),
+            },
+        )
